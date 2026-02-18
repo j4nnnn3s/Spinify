@@ -1,0 +1,15 @@
+# Spinify – Raspberry Pi core + API
+python-dotenv>=1.0.0
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0.0
+
+# Spotify (Phase 2)
+spotipy>=2.23.0
+
+# NFC (optional on Pi; install on device)
+# mfrc522>=0.0.7
+# spidev>=3.6
+
+# GPIO (optional on Pi; install on device)
+# RPi.GPIO>=0.7.1
