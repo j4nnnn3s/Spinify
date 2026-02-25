@@ -75,13 +75,13 @@ class MotorService:
             GPIO.output(pin, seq[idx][i])
 
     def _step_tone_arm(self, direction: int) -> None:
-        """Advance tone-arm one half-step."""
+        """Advance tone-arm one half-step (physical rotation reversed vs step sign)."""
         self._tone_arm_steps += direction
         if self._simulate:
             return
         seq = HALF_STEP_SEQUENCE
         idx = self._tone_arm_sequence_index
-        idx = (idx + direction) % len(seq)
+        idx = (idx - direction) % len(seq)  # reverse physical direction
         self._tone_arm_sequence_index = idx
         for i, pin in enumerate(PIN_TONE_ARM):
             GPIO.output(pin, seq[idx][i])
@@ -128,6 +128,15 @@ class MotorService:
         steps = int((angle_deg / 360.0) * TONE_ARM_STEPS_PER_REV)
         steps = max(-TONE_ARM_MAX_STEPS, min(TONE_ARM_MAX_STEPS, steps))
         self.move_tone_arm(steps, absolute=True)
+
+    def sync_tone_arm_to_fraction(self, fraction: float) -> None:
+        """Move tone-arm so that 0.0 = home and 1.0 = end-of-record arc.
+
+        Uses TONE_ARM_MAX_STEPS as the maximum travel from home.
+        """
+        f = max(0.0, min(1.0, fraction))
+        target_steps = int(f * TONE_ARM_MAX_STEPS)
+        self.move_tone_arm(target_steps, absolute=True)
 
     def get_turntable_state(self) -> SpinState:
         """Return current turntable spin state."""
