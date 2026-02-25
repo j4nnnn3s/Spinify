@@ -37,10 +37,11 @@ PIN_TURNTABLE = (17, 18, 27, 22)
 # Tone-arm ULN2003 IN1–4
 PIN_TONE_ARM = (5, 6, 13, 19)
 
-# Motor calibration (28BYJ-48 half-step: 4096 steps/rev typical)
+# Motor calibration
+# Default: turntable assumes 4096 steps/rev, tone-arm 512 steps/rev (your measured value)
 STEPS_PER_REV = int(os.getenv("SPINIFY_STEPS_PER_REV", "4096"))
-TONE_ARM_STEPS_PER_REV = int(os.getenv("SPINIFY_TONE_ARM_STEPS_PER_REV", "4096"))
-TONE_ARM_MAX_STEPS = int(os.getenv("SPINIFY_TONE_ARM_MAX_STEPS", "2048"))  # limited arc
+TONE_ARM_STEPS_PER_REV = int(os.getenv("SPINIFY_TONE_ARM_STEPS_PER_REV", "512"))
+TONE_ARM_MAX_STEPS = int(os.getenv("SPINIFY_TONE_ARM_MAX_STEPS", "512"))  # limited arc
 
 # Acceleration (min/max delay between steps in seconds)
 MOTOR_MIN_DELAY = 0.001
