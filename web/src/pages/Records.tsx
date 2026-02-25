@@ -1,22 +1,31 @@
 import { useEffect, useState } from 'react'
-import { api, type RecordMapping } from '../api'
-import { parseSpotifyUrl } from '../spotify'
+import { useSearchParams } from 'react-router-dom'
+import toast from 'react-hot-toast'
+import { api, type Record } from '../api'
 
 export default function Records() {
-  const [records, setRecords] = useState<RecordMapping[]>([])
+  const [searchParams] = useSearchParams()
+  const prefilledUid = searchParams.get('uid') ?? ''
+
+  const [records, setRecords] = useState<Record[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [scanUid, setScanUid] = useState('')
-  const [addOpen, setAddOpen] = useState(false)
-  const [newName, setNewName] = useState('')
-  const [newUri, setNewUri] = useState('')
-  const [newType, setNewType] = useState<'album' | 'playlist'>('album')
-  const [submitting, setSubmitting] = useState(false)
 
-  const load = async () => {
+  const [addUid, setAddUid] = useState(prefilledUid)
+  const [addUrl, setAddUrl] = useState('')
+  const [addSubmitting, setAddSubmitting] = useState(false)
+  const [scanning, setScanning] = useState(false)
+
+  const [editRecord, setEditRecord] = useState<Record | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editUri, setEditUri] = useState('')
+  const [editType, setEditType] = useState('')
+  const [editSubmitting, setEditSubmitting] = useState(false)
+
+  const refresh = async () => {
     try {
-      const res = await api.records.list()
-      setRecords(res.records)
+      const list = await api.records.list()
+      setRecords(list)
       setError(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load')
@@ -26,56 +35,81 @@ export default function Records() {
   }
 
   useEffect(() => {
-    load()
+    refresh()
   }, [])
 
+  useEffect(() => {
+    if (prefilledUid) setAddUid(prefilledUid)
+  }, [prefilledUid])
+
   const handleScan = async () => {
+    setScanning(true)
     try {
       const res = await api.nfc.scan()
-      setScanUid(res.uid ?? '')
+      if (res.uid) setAddUid(res.uid)
+      else toast.error('No tag detected')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Scan failed')
+      toast.error(e instanceof Error ? e.message : 'Scan failed')
+    } finally {
+      setScanning(false)
     }
-  }
-
-  const handleSimulate = (uid: string) => {
-    api.nfc.simulate(uid).then(() => setScanUid(uid)).catch(() => {})
   }
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault()
-    const uid = scanUid.trim()
-    if (!uid || !newName.trim() || !newUri.trim()) return
-    const parsed = parseSpotifyUrl(newUri)
-    const spotifyUri = parsed ? parsed.uri : newUri.trim()
-    const spotifyType = parsed ? parsed.type : newType
-    setSubmitting(true)
+    const uid = addUid.trim()
+    const url = addUrl.trim()
+    if (!uid || !url) return
+    setAddSubmitting(true)
     try {
-      await api.records.create({
-        nfc_uid: uid,
-        name: newName.trim(),
-        spotify_uri: spotifyUri,
-        type: spotifyType,
-      })
-      setAddOpen(false)
-      setNewName('')
-      setNewUri('')
-      setScanUid('')
-      load()
+      await api.records.create({ nfc_uid: uid, spotify_url: url })
+      toast.success('Record mapped')
+      setAddUrl('')
+      if (!prefilledUid) setAddUid('')
+      await refresh()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Create failed')
+      toast.error(e instanceof Error ? e.message : 'Failed to add')
     } finally {
-      setSubmitting(false)
+      setAddSubmitting(false)
     }
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Remove this record mapping?')) return
+  const openEdit = (r: Record) => {
+    setEditRecord(r)
+    setEditName(r.name)
+    setEditUri(r.spotify_uri)
+    setEditType(r.type)
+  }
+
+  const handleEdit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editRecord) return
+    setEditSubmitting(true)
     try {
-      await api.records.delete(id)
-      load()
+      await api.records.update(editRecord.record_id, {
+        name: editName || undefined,
+        spotify_uri: editUri || undefined,
+        type: editType || undefined,
+      })
+      toast.success('Record updated')
+      setEditRecord(null)
+      await refresh()
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Delete failed')
+      toast.error(e instanceof Error ? e.message : 'Failed to update')
+    } finally {
+      setEditSubmitting(false)
+    }
+  }
+
+  const handleDelete = async (record_id: string) => {
+    if (!confirm('Delete this mapping?')) return
+    try {
+      await api.records.delete(record_id)
+      toast.success('Record deleted')
+      await refresh()
+      if (editRecord?.record_id === record_id) setEditRecord(null)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to delete')
     }
   }
 
@@ -87,112 +121,151 @@ export default function Records() {
     )
   }
 
-  return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Record mappings</h1>
-        <button
-          onClick={() => setAddOpen(true)}
-          className="px-4 py-2 rounded-full bg-spotify-green hover:bg-spotify-green-hover text-black font-semibold text-sm transition-colors"
-        >
-          Add record
+  if (error) {
+    return (
+      <div className="rounded-lg bg-red-950/40 border border-red-900/50 text-red-200 px-4 py-3">
+        {error}
+        <button onClick={() => { setLoading(true); refresh() }} className="ml-3 text-sm underline">
+          Retry
         </button>
       </div>
+    )
+  }
 
-      {error && (
-        <div className="rounded-lg bg-red-950/40 border border-red-900/50 text-red-200 px-4 py-3">
-          {error}
-        </div>
-      )}
+  return (
+    <div className="space-y-8">
+      <h1 className="text-2xl font-semibold tracking-tight">Record mappings</h1>
+      <p className="text-neutral-400 text-sm">
+        Map NFC tag UIDs to Spotify albums or playlists. Type and title are filled from Spotify when you add a URL.
+      </p>
 
-      {records.length === 0 ? (
-        <div className="rounded-2xl border border-neutral-800 bg-neutral-900/50 p-12 text-center">
-          <p className="text-neutral-400 mb-2">No record mappings yet</p>
-          <p className="text-sm text-neutral-500 mb-4">Map an NFC tag to a Spotify album or playlist</p>
-          <button
-            onClick={() => setAddOpen(true)}
-            className="text-spotify-green hover:underline text-sm"
-          >
-            Add your first record
-          </button>
-        </div>
-      ) : (
-        <ul className="space-y-3">
-          {records.map((r) => (
-            <li
-              key={r.record_id}
-              className="rounded-xl border border-neutral-800 bg-neutral-900/50 p-4 flex items-center justify-between gap-4"
+      <section className="rounded-2xl border border-neutral-800 bg-neutral-900/50 p-6">
+        <h2 className="text-lg font-medium mb-4">Add mapping</h2>
+        <form onSubmit={handleAdd} className="space-y-4">
+          <div className="flex flex-wrap gap-2 items-end">
+            <div className="min-w-0 flex-1">
+              <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+                NFC UID
+              </label>
+              <input
+                type="text"
+                value={addUid}
+                onChange={(e) => setAddUid(e.target.value)}
+                placeholder="e.g. 88047739"
+                className="w-full rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-sm font-mono"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleScan}
+              disabled={scanning}
+              className="px-4 py-2 rounded-full bg-neutral-700 hover:bg-neutral-600 text-sm font-medium disabled:opacity-50"
             >
-              <div className="min-w-0">
-                <p className="font-medium truncate">{r.name}</p>
-                <p className="text-sm text-neutral-500 truncate">{r.spotify_uri}</p>
-                <p className="text-xs text-neutral-600 mt-0.5">UID: {r.nfc_uid}</p>
-              </div>
-              <button
-                onClick={() => handleDelete(r.record_id)}
-                className="text-sm text-red-400 hover:text-red-300 transition-colors"
-              >
-                Remove
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+              {scanning ? '…' : 'Scan'}
+            </button>
+          </div>
+          <div>
+            <label className="block text-xs text-neutral-500 uppercase tracking-wider mb-1">
+              Spotify URL
+            </label>
+            <input
+              type="text"
+              value={addUrl}
+              onChange={(e) => setAddUrl(e.target.value)}
+              placeholder="https://open.spotify.com/album/... or playlist/..."
+              className="w-full rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-sm"
+              required
+            />
+          </div>
+          <button
+            type="submit"
+            disabled={addSubmitting || !addUid.trim() || !addUrl.trim()}
+            className="px-4 py-2 rounded-full bg-spotify-green hover:bg-spotify-green-hover text-black font-semibold text-sm disabled:opacity-50"
+          >
+            {addSubmitting ? 'Adding…' : 'Add mapping'}
+          </button>
+        </form>
+      </section>
 
-      {addOpen && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-10" onClick={() => setAddOpen(false)}>
-          <div className="bg-neutral-900 border border-neutral-700 rounded-2xl p-6 w-full max-w-md shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-lg font-semibold mb-4">Add record mapping</h2>
-            <form onSubmit={handleAdd} className="space-y-4">
-              <div>
-                <label className="block text-sm text-neutral-400 mb-1">NFC UID</label>
+      <section>
+        <h2 className="text-lg font-medium mb-4">Mappings</h2>
+        {records.length === 0 ? (
+          <p className="text-neutral-500 text-sm">No mappings yet. Add one above.</p>
+        ) : (
+          <ul className="space-y-3">
+            {records.map((r) => (
+              <li
+                key={r.record_id}
+                className="rounded-xl border border-neutral-800 p-4 flex flex-wrap items-center justify-between gap-4"
+              >
+                <div className="min-w-0">
+                  <p className="font-medium truncate">{r.name || '—'}</p>
+                  <p className="text-sm text-neutral-500">
+                    <span className="capitalize">{r.type}</span> · UID: <span className="font-mono">{r.nfc_uid}</span>
+                  </p>
+                  <p className="text-xs text-neutral-600 truncate mt-1">{r.spotify_uri}</p>
+                </div>
                 <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={scanUid}
-                    onChange={(e) => setScanUid(e.target.value)}
-                    placeholder="Place tag and scan, or enter UID"
-                    className="flex-1 rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-sm"
-                  />
-                  <button type="button" onClick={handleScan} className="px-3 py-2 rounded-lg bg-neutral-700 hover:bg-neutral-600 text-sm">
-                    Scan
+                  <button
+                    type="button"
+                    onClick={() => openEdit(r)}
+                    className="px-3 py-1.5 rounded-full bg-neutral-700 hover:bg-neutral-600 text-sm"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(r.record_id)}
+                    className="px-3 py-1.5 rounded-full bg-red-900/50 hover:bg-red-900 text-red-200 text-sm"
+                  >
+                    Delete
                   </button>
                 </div>
-                <p className="text-xs text-neutral-500 mt-1">Dev: simulate UID e.g. <button type="button" onClick={() => handleSimulate('abc123')} className="text-spotify-green hover:underline">abc123</button></p>
-              </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {editRecord && (
+        <div
+          className="fixed inset-0 bg-black/60 flex items-center justify-center p-4 z-10"
+          onClick={() => setEditRecord(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="edit-record-heading"
+        >
+          <div
+            className="bg-neutral-900 border border-neutral-700 rounded-2xl p-6 w-full max-w-md shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 id="edit-record-heading" className="text-lg font-semibold mb-4">
+              Edit mapping
+            </h2>
+            <form onSubmit={handleEdit} className="space-y-4">
               <div>
                 <label className="block text-sm text-neutral-400 mb-1">Name</label>
                 <input
                   type="text"
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="e.g. Jazz Night"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
                   className="w-full rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-sm"
-                  required
                 />
               </div>
               <div>
-                <label className="block text-sm text-neutral-400 mb-1">Spotify URL or URI</label>
+                <label className="block text-sm text-neutral-400 mb-1">Spotify URI</label>
                 <input
                   type="text"
-                  value={newUri}
-                  onChange={(e) => {
-                    const v = e.target.value
-                    setNewUri(v)
-                    const parsed = parseSpotifyUrl(v)
-                    if (parsed) setNewType(parsed.type)
-                  }}
-                  placeholder="https://open.spotify.com/playlist/... or spotify:playlist:..."
-                  className="w-full rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-sm"
-                  required
+                  value={editUri}
+                  onChange={(e) => setEditUri(e.target.value)}
+                  className="w-full rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-sm font-mono text-sm"
                 />
-                <p className="text-xs text-neutral-500 mt-1">Paste a link or URI; type is set from URL if detected.</p>
               </div>
               <div>
                 <label className="block text-sm text-neutral-400 mb-1">Type</label>
                 <select
-                  value={newType}
-                  onChange={(e) => setNewType(e.target.value as 'album' | 'playlist')}
+                  value={editType}
+                  onChange={(e) => setEditType(e.target.value)}
                   className="w-full rounded-lg bg-neutral-800 border border-neutral-700 px-3 py-2 text-sm"
                 >
                   <option value="album">Album</option>
@@ -200,10 +273,18 @@ export default function Records() {
                 </select>
               </div>
               <div className="flex gap-2 pt-2">
-                <button type="submit" disabled={submitting} className="px-4 py-2 rounded-full bg-spotify-green hover:bg-spotify-green-hover text-black font-semibold text-sm disabled:opacity-50">
-                  {submitting ? '…' : 'Save'}
+                <button
+                  type="submit"
+                  disabled={editSubmitting}
+                  className="px-4 py-2 rounded-full bg-spotify-green hover:bg-spotify-green-hover text-black font-semibold text-sm disabled:opacity-50"
+                >
+                  {editSubmitting ? 'Saving…' : 'Save'}
                 </button>
-                <button type="button" onClick={() => setAddOpen(false)} className="px-4 py-2 rounded-full bg-neutral-700 hover:bg-neutral-600 text-sm">
+                <button
+                  type="button"
+                  onClick={() => setEditRecord(null)}
+                  className="px-4 py-2 rounded-full bg-neutral-700 hover:bg-neutral-600 text-sm"
+                >
                   Cancel
                 </button>
               </div>

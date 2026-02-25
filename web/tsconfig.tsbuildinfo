@@ -1,1 +1,1 @@
-{"root":["./src/App.tsx","./src/api.ts","./src/main.tsx","./src/spotify.ts","./src/vite-env.d.ts","./src/pages/Connect.tsx","./src/pages/Dashboard.tsx","./src/pages/Records.tsx"],"version":"5.9.3"}
+{"root":["./src/App.tsx","./src/api.ts","./src/main.tsx","./src/spotify.ts","./src/vite-env.d.ts","./src/components/RecordCard.tsx","./src/components/SkeletonLoader.tsx","./src/components/StatusCard.tsx","./src/hooks/usePolling.ts","./src/pages/Connect.tsx","./src/pages/Dashboard.tsx","./src/pages/Records.tsx","./src/pages/Settings.tsx"],"version":"5.9.3"}
