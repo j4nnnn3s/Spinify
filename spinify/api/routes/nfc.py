@@ -4,36 +4,29 @@ from typing import Optional
 from fastapi import APIRouter, Depends
 
 from spinify.api.state import AppState, get_state
+from spinify.core.record_store import get_mapping_by_uid, load_mappings
 from spinify.core.spotify_client import get_cover_url_for_uri
-from spinify.models.record import RecordMapping
 
 router = APIRouter()
 
 
-def _mapping_to_dict(m: RecordMapping) -> dict:
-    return {
-        "record_id": m.record_id,
-        "nfc_uid": m.nfc_uid,
-        "name": m.name,
-        "spotify_uri": m.spotify_uri,
-        "type": m.type,
-        "created_at": m.created_at,
-    }
-
-
 @router.get("/current")
 def get_current(state: AppState = Depends(get_state)):
-    """Return currently placed record (UID + mapping if known)."""
+    """Return currently placed record (UID + Spotify URI from record_store)."""
     placed = state.nfc_service.get_current()
     if placed is None:
-        return {"uid": None, "record": None, "record_cover_url": None}
-    record_dict = _mapping_to_dict(placed.mapping) if placed.mapping else None
-    record_cover_url = None
-    if placed.mapping and placed.mapping.spotify_uri:
-        record_cover_url = get_cover_url_for_uri(placed.mapping.spotify_uri)
+        return {"uid": None, "spotify_uri": None, "record_name": None, "record_cover_url": None}
+
+    mappings = load_mappings()
+    mapping = get_mapping_by_uid(mappings, placed.nfc_uid)
+    spotify_uri = mapping.spotify_uri if mapping else None
+    record_name = mapping.name if mapping else None
+    record_cover_url = get_cover_url_for_uri(spotify_uri) if spotify_uri else None
+
     return {
         "uid": placed.nfc_uid,
-        "record": record_dict,
+        "spotify_uri": spotify_uri,
+        "record_name": record_name,
         "record_cover_url": record_cover_url,
     }
 
@@ -48,8 +41,9 @@ def scan_once(state: AppState = Depends(get_state)):
 @router.post("/simulate")
 def simulate_uid(
     uid: Optional[str] = None,
+    spotify_uri: Optional[str] = None,
     state: AppState = Depends(get_state),
 ):
     """For development: set simulated UID when hardware is simulated."""
-    state.nfc_service.set_simulated_uid(uid)
-    return {"ok": True, "uid": uid}
+    state.nfc_service.set_simulated_uid(uid, spotify_uri)
+    return {"ok": True, "uid": uid, "spotify_uri": spotify_uri}

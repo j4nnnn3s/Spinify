@@ -19,7 +19,6 @@ _state = get_state()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     ensure_data_dir()
-    _state.load_mappings()
     _state.nfc_service.start_polling(interval_sec=0.5)
     yield
     _state.nfc_service.stop_polling()

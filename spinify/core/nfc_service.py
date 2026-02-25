@@ -1,13 +1,13 @@
-"""NFC (RC522) read loop and UID -> record mapping lookup."""
+"""NFC (RC522) read loop: UID only. Spotify URI is resolved from record_store by UID."""
 import threading
 import time
-from typing import Callable, Optional
+from typing import Optional
 
 # Keep reporting last seen UID for this long after reader misses the tag (e.g. record spinning)
 _NFC_GRACE_SEC = 1.0
 
-from spinify.config import PIN_RC522_RST_BOARD, PIN_RC522_SDA, SIMULATE_HARDWARE
-from spinify.models.record import PlacedRecord, RecordMapping
+from spinify.config import PIN_RC522_RST_BOARD, SIMULATE_HARDWARE
+from spinify.models.record import PlacedRecord
 
 # Optional: MFRC522 for real hardware (mfrc522 or pi-rc522)
 _RC522_AVAILABLE = False
@@ -25,14 +25,12 @@ except ImportError:
 
 
 class NFCService:
-    """Polls RC522 for tag UID and looks up RecordMapping."""
+    """Polls RC522 for tag UID. Spotify URI is resolved from record_store in the API layer."""
 
     def __init__(
         self,
-        get_mapping: Callable[[str], Optional[RecordMapping]],
         simulate: bool = SIMULATE_HARDWARE or not _RC522_AVAILABLE,
     ) -> None:
-        self._get_mapping = get_mapping
         self._simulate = simulate
         self._current_uid: Optional[str] = None
         self._last_seen_time: Optional[float] = None
@@ -45,21 +43,15 @@ class NFCService:
             if _SIMPLE_READER:
                 self._simple_reader = SimpleMFRC522()
             else:
-                # pimylifeup MFRC522: device=0 → CE0 (GPIO 8); pin_rst=22 = BOARD 22 = BCM 25 (RPi.GPIO uses BOARD by default on Pi Zero 2 W)
                 self._reader = MFRC522(device=0, pin_rst=PIN_RC522_RST_BOARD)
 
     def get_current(self) -> Optional[PlacedRecord]:
-        """Return currently placed record (UID + mapping if known)."""
+        """Return currently placed record (UID only). URI is resolved from record_store in the API."""
         with self._lock:
             uid = self._current_uid
         if uid is None:
             return None
-        mapping = self._get_mapping(uid)
-        return PlacedRecord(
-            nfc_uid=uid,
-            record_id=mapping.record_id if mapping else None,
-            mapping=mapping,
-        )
+        return PlacedRecord(nfc_uid=uid, spotify_uri=None)
 
     def scan_once(self) -> Optional[str]:
         """One-shot read; returns UID if tag present, else None."""
@@ -77,7 +69,6 @@ class NFCService:
         if self._reader is None:
             return None
         try:
-            # pimylifeup API: MFRC522_Request / MFRC522_Anticoll (no init(); chip already initialized in __init__)
             (status, _) = self._reader.MFRC522_Request(self._reader.PICC_REQIDL)
             if status != self._reader.MI_OK:
                 return None
@@ -88,8 +79,8 @@ class NFCService:
         except Exception:
             return None
 
-    def set_simulated_uid(self, uid: Optional[str]) -> None:
-        """For development: set UID when simulating hardware."""
+    def set_simulated_uid(self, uid: Optional[str], spotify_uri: Optional[str] = None) -> None:
+        """For development: set simulated UID. URI is resolved from record_store in the API."""
         if not self._simulate:
             return
         with self._lock:
