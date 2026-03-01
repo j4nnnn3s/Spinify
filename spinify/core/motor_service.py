@@ -12,8 +12,11 @@ from spinify.config import (
     SIMULATE_HARDWARE,
     STEPS_PER_REV,
     TONE_ARM_MAX_STEPS,
+    TONE_ARM_RECORD_END_STEPS,
+    TONE_ARM_RECORD_START_STEPS,
     TONE_ARM_STEPS_PER_REV,
     TURNTABLE_TARGET_RPM,
+    TURNTABLE_TARGET_STEPS_PER_SEC,
 )
 from spinify.models.motors import SpinState, ToneArmPosition
 
@@ -74,38 +77,58 @@ class MotorService:
         for i, pin in enumerate(PIN_TURNTABLE):
             GPIO.output(pin, seq[idx][i])
 
-    def _step_tone_arm(self, direction: int) -> None:
-        """Advance tone-arm one half-step (physical rotation reversed vs step sign)."""
-        self._tone_arm_steps += direction
+    def _step_tone_arm(self, direction: int, update_steps: bool = True) -> None:
+        """Advance tone-arm one half-step (physical rotation inverted vs step sign).
+        When update_steps is False (e.g. from Settings calibration), only the motor moves; _tone_arm_steps is not updated.
+        """
+        if update_steps:
+            self._tone_arm_steps += direction
         if self._simulate:
             return
         seq = HALF_STEP_SEQUENCE
         idx = self._tone_arm_sequence_index
-        idx = (idx - direction) % len(seq)  # reverse physical direction
+        idx = (idx + direction) % len(seq)  # inverted so positive steps = toward end of record
         self._tone_arm_sequence_index = idx
         for i, pin in enumerate(PIN_TONE_ARM):
             GPIO.output(pin, seq[idx][i])
 
     def get_tone_arm_position(self) -> ToneArmPosition:
-        """Return current tone-arm position."""
+        """Return current tone-arm position (steps_from_home: positive = toward end of record)."""
         with self._lock:
-            angle = (self._tone_arm_steps / TONE_ARM_STEPS_PER_REV) * 360.0
+            # Report inverted so API/calibration see positive = toward end
+            steps = -self._tone_arm_steps
+            angle = (steps / TONE_ARM_STEPS_PER_REV) * 360.0
             return ToneArmPosition(
-                steps_from_home=self._tone_arm_steps,
+                steps_from_home=steps,
                 total_steps_per_rev=TONE_ARM_STEPS_PER_REV,
                 current_angle_deg=angle,
             )
 
-    def move_tone_arm(self, steps: int, absolute: bool = False) -> None:
-        """Move tone-arm by steps (relative) or to steps (absolute). Blocking with accel."""
+    def move_tone_arm(self, steps: int, absolute: bool = False, from_settings: bool = False) -> None:
+        """Move tone-arm by steps (relative) or to steps (absolute). Blocking with accel.
+
+        Steps are in 'steps_from_home': 0 = home, positive = toward end of record.
+        When from_settings is True (Settings calibration), the motor moves but _tone_arm_steps is not
+        updated, so the logical position is unchanged and you can correct the physical home without
+        losing sync.
+        """
+        update_steps = not from_settings
         with self._lock:
-            target = steps if absolute else self._tone_arm_steps + steps
-            target = max(-TONE_ARM_MAX_STEPS, min(TONE_ARM_MAX_STEPS, target))
+            # External steps: 0 = home, positive = toward end. Internal _tone_arm_steps is inverted.
+            target_ext = steps if absolute else (-self._tone_arm_steps + steps)
+            target = max(-TONE_ARM_MAX_STEPS, min(TONE_ARM_MAX_STEPS, -target_ext))
         delta = target - self._tone_arm_steps
-        if delta == 0:
+        if delta == 0 and not from_settings:
             return
-        direction = 1 if delta > 0 else -1
-        steps_to_move = abs(delta)
+        if from_settings:
+            # Relative move only: steps is the delta; we don't update internal position
+            steps_to_move = abs(steps)
+            direction = 1 if steps > 0 else -1
+            if steps_to_move == 0:
+                return
+        else:
+            direction = 1 if delta > 0 else -1
+            steps_to_move = abs(delta)
         # Ramp: start slow, speed up, slow down at end
         steps_accel = min(steps_to_move // 3, 50)
         steps_decel = min(steps_to_move // 3, 50)
@@ -120,7 +143,7 @@ class MotorService:
             return MOTOR_MIN_DELAY
 
         for i in range(steps_to_move):
-            self._step_tone_arm(direction)
+            self._step_tone_arm(direction, update_steps=update_steps)
             time.sleep(delay_for_step(i))
 
     def move_tone_arm_to_angle(self, angle_deg: float) -> None:
@@ -130,12 +153,27 @@ class MotorService:
         self.move_tone_arm(steps, absolute=True)
 
     def sync_tone_arm_to_fraction(self, fraction: float) -> None:
-        """Move tone-arm so that 0.0 = home and 1.0 = end-of-record arc.
+        """Move tone-arm so that 0.0 = start of record and 1.0 = end-of-record arc.
 
-        Uses TONE_ARM_MAX_STEPS as the maximum travel from home.
+        Fraction is playlist position in [0, 1]. Target steps are in steps_from_home
+        (0 = home, positive = toward end). Uses TONE_ARM_RECORD_START_STEPS and/or
+        TONE_ARM_RECORD_END_STEPS when set (so we never ignore a calibrated bound);
+        defaults to 0 and TONE_ARM_MAX_STEPS for any unset bound. Uses round() for
+        fraction->steps to avoid systematic truncation.
         """
         f = max(0.0, min(1.0, fraction))
-        target_steps = int(f * TONE_ARM_MAX_STEPS)
+        start_step = (
+            TONE_ARM_RECORD_START_STEPS
+            if TONE_ARM_RECORD_START_STEPS is not None
+            else 0
+        )
+        end_step = (
+            TONE_ARM_RECORD_END_STEPS
+            if TONE_ARM_RECORD_END_STEPS is not None
+            else TONE_ARM_MAX_STEPS
+        )
+        target_steps = int(round(start_step + f * (end_step - start_step)))
+        target_steps = max(-TONE_ARM_MAX_STEPS, min(TONE_ARM_MAX_STEPS, target_steps))
         self.move_tone_arm(target_steps, absolute=True)
 
     def get_turntable_state(self) -> SpinState:
@@ -153,16 +191,19 @@ class MotorService:
 
     def turntable_start(self, direction: int = 1, speed_rpm: Optional[float] = None) -> None:
         """Start turntable with smooth acceleration."""
-        rpm = speed_rpm if speed_rpm is not None else TURNTABLE_TARGET_RPM
-        target_speed = self._rpm_to_steps_per_sec(rpm)
+        if speed_rpm is not None:
+            target_speed = self._rpm_to_steps_per_sec(speed_rpm)
+        else:
+            target_speed = TURNTABLE_TARGET_STEPS_PER_SEC
         with self._lock:
             if self._turntable_spinning:
-                self._turntable_direction = direction
+                self._turntable_direction = 1
                 self._turntable_target_speed_steps_per_sec = target_speed
                 return
             self._turntable_stop_requested = False
-            self._turntable_direction = direction
+            self._turntable_direction = 1
             self._turntable_target_speed_steps_per_sec = target_speed
+            self._turntable_current_speed = target_speed  # instant speed, skip ramp
             self._turntable_spinning = True
         if self._turntable_thread and self._turntable_thread.is_alive():
             return

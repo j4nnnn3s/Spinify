@@ -14,6 +14,7 @@ except ImportError:
 DATA_DIR = BASE_DIR / "data"
 RECORD_MAPPINGS_PATH = DATA_DIR / "record_mappings.json"
 SPOTIFY_TOKEN_CACHE = DATA_DIR / ".spotify-token"
+DEFAULT_PLAYBACK_DEVICE_PATH = DATA_DIR / ".spotify-default-device"
 
 # API
 API_HOST = os.getenv("SPINIFY_API_HOST", "0.0.0.0")
@@ -42,10 +43,19 @@ PIN_TONE_ARM = (5, 6, 13, 19)
 STEPS_PER_REV = int(os.getenv("SPINIFY_STEPS_PER_REV", "4096"))
 TONE_ARM_STEPS_PER_REV = int(os.getenv("SPINIFY_TONE_ARM_STEPS_PER_REV", "512"))
 TONE_ARM_MAX_STEPS = int(os.getenv("SPINIFY_TONE_ARM_MAX_STEPS", "512"))  # limited arc
+# Optional: physical record range (from calibrate_tone_arm.py). If both set, fraction 0->start, 1->end.
+_v_start = (os.getenv("SPINIFY_TONE_ARM_RECORD_START_STEPS") or "").strip()
+_v_end = (os.getenv("SPINIFY_TONE_ARM_RECORD_END_STEPS") or "").strip()
+TONE_ARM_RECORD_START_STEPS = int(_v_start) if _v_start else None
+TONE_ARM_RECORD_END_STEPS = int(_v_end) if _v_end else None
 
 # Acceleration (min/max delay between steps in seconds)
 MOTOR_MIN_DELAY = 0.001
 MOTOR_MAX_DELAY = 0.008
+# Turntable: target speed in half-steps per second (default 1/0.003 to match test script)
+TURNTABLE_TARGET_STEPS_PER_SEC = float(
+    os.getenv("SPINIFY_TURNTABLE_STEPS_PER_SEC", str(1.0 / 0.003))
+)
 TURNTABLE_TARGET_RPM = float(os.getenv("SPINIFY_TURNTABLE_RPM", "33.33"))
 
 # Hardware simulation (for development without Pi)
