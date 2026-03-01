@@ -90,22 +90,31 @@ export const api = {
           track_index?: number;
           total_tracks?: number;
         }>('/api/motors/tone-arm/sync', { method: 'POST' }),
-      jog: (steps: number, absolute = false) =>
+      jog: (steps: number, absolute = false, fromSettings = false) =>
         fetchApi<{ ok: boolean; error?: string }>('/api/motors/tone-arm', {
           method: 'POST',
           body: JSON.stringify({
             position: absolute ? 'absolute' : 'relative',
             steps,
+            from_settings: fromSettings,
           }),
         }),
     },
   },
   spotify: {
-    authUrl: () => fetchApi<{ auth_url: string | null; error?: string }>('/api/spotify/auth-url'),
+    authUrl: () =>
+      fetchApi<{ auth_url: string | null; error?: string; logged_in?: boolean }>('/api/spotify/auth-url'),
     completeLogin: (body: { redirect_url?: string; code?: string }) =>
       fetchApi<{ ok: boolean; message?: string }>('/api/spotify/complete-login', {
         method: 'POST',
         body: JSON.stringify(body),
+      }),
+    logout: () => fetchApi<{ ok: boolean }>('/api/spotify/logout', { method: 'POST' }),
+    defaultDevice: () =>
+      fetchApi<{ device_id: string | null; name: string | null }>('/api/spotify/default-device'),
+    saveCurrentDevice: () =>
+      fetchApi<{ device_id: string; name: string }>('/api/spotify/default-device/save-current', {
+        method: 'POST',
       }),
   },
   records: {

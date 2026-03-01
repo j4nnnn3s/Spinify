@@ -12,7 +12,6 @@ export default function Dashboard() {
   const [playback, setPlayback] = useState<PlaybackState | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [action, setAction] = useState<'idle' | 'start' | 'stop'>('idle')
 
   const refresh = useCallback(async () => {
     try {
@@ -39,68 +38,12 @@ export default function Dashboard() {
       nfc.spotify_uri === playback.context_uri
   )
 
-  const syncToneArm = useCallback(async () => {
-    if (!nfc?.uid) return
-    try {
-      await api.motors.toneArm.sync()
-    } catch {
-      // Ignore sync errors; UI stays responsive
-    }
-  }, [nfc?.uid])
-
   usePolling(refresh, {
     activeIntervalMs: 2000,
     idleIntervalMs: 5000,
     isActive: Boolean(playback?.is_playing),
     runOnMount: true,
   })
-
-  usePolling(syncToneArm, {
-    activeIntervalMs: 3000,
-    idleIntervalMs: 5000,
-    isActive: Boolean(nfc?.uid),
-    runOnMount: false,
-  })
-
-  const handlePlayPause = async () => {
-    setAction(playback?.is_playing ? 'stop' : 'start')
-    try {
-      if (playback?.is_playing) await api.playback.stop()
-      else await api.playback.start(nfc?.spotify_uri ?? undefined)
-      await refresh()
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Request failed'
-      toast.error(msg ?? 'Request failed')
-    } finally {
-      setAction('idle')
-    }
-  }
-
-  const handlePlayRecord = async () => {
-    if (!nfc?.spotify_uri) return
-    setAction('start')
-    try {
-      await api.playback.start(nfc.spotify_uri)
-      await refresh()
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Request failed'
-      toast.error(msg ?? 'Request failed')
-    } finally {
-      setAction('idle')
-    }
-  }
-
-  const playStopButton = (
-    <button
-      type="button"
-      onClick={handlePlayPause}
-      disabled={action !== 'idle'}
-      className="focus-ring touch-target inline-flex items-center gap-2 px-5 py-2.5 rounded-full bg-spotify-green hover:bg-spotify-green-hover text-black font-semibold text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-colors min-h-[44px]"
-      aria-label={playback?.is_playing ? 'Stop playback' : 'Start playback'}
-    >
-      {action !== 'idle' ? '…' : playback?.is_playing ? 'Stop' : 'Play'}
-    </button>
-  )
 
   if (loading) {
     return (
@@ -149,13 +92,9 @@ export default function Dashboard() {
           <h2 id="no-record-heading" className="text-neutral-400 mb-2">
             No record on the platter
           </h2>
-          <p className="text-sm text-neutral-500 mb-6">
-            Place an NFC-tagged record to see it here
+          <p className="text-sm text-neutral-500">
+            Place an NFC-tagged record to see it here. Use the physical button to start or stop playback.
           </p>
-          <p className="text-xs text-neutral-500 uppercase tracking-wider mb-2">
-            Soft control
-          </p>
-          {playStopButton}
         </section>
       ) : (
         <section
@@ -210,9 +149,8 @@ export default function Dashboard() {
                     Track {playback.track_index + 1}
                   </p>
                 )}
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {playStopButton}
-                  {nfc?.uid && (
+                {nfc?.uid && (
+                  <div className="mt-4">
                     <Link
                       to={`/records?uid=${encodeURIComponent(nfc.uid)}`}
                       className="focus-ring touch-target inline-flex items-center gap-2 px-4 py-2.5 rounded-full bg-neutral-700 hover:bg-neutral-600 text-white font-semibold text-sm transition-colors min-h-[44px]"
@@ -220,8 +158,8 @@ export default function Dashboard() {
                     >
                       Map this record
                     </Link>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -241,19 +179,7 @@ export default function Dashboard() {
           uid={nfc?.uid ?? null}
           recordName={nfc?.record_name ?? null}
           label="Current record"
-        >
-          {nfc?.spotify_uri && !recordIsPlaying && (
-            <button
-              type="button"
-              onClick={handlePlayRecord}
-              disabled={action !== 'idle'}
-              className="focus-ring touch-target mt-2 inline-flex items-center gap-1.5 px-3 py-2 rounded-full bg-spotify-green hover:bg-spotify-green-hover text-black font-semibold text-xs disabled:opacity-50 disabled:cursor-not-allowed transition-colors min-h-[44px]"
-              aria-label="Play this record"
-            >
-              {action === 'start' ? '…' : 'Play'}
-            </button>
-          )}
-        </RecordCard>
+        />
         <StatusCard
           id="playback-status-label"
           label="Playback"

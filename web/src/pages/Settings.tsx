@@ -3,12 +3,23 @@ import { api } from '../api'
 
 export default function Settings() {
   const [authUrl, setAuthUrl] = useState<string | null>(null)
+  const [loggedIn, setLoggedIn] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [pasteUrl, setPasteUrl] = useState('')
   const [pasteError, setPasteError] = useState<string | null>(null)
   const [pasteSuccess, setPasteSuccess] = useState(false)
   const [completing, setCompleting] = useState(false)
+  const [loggingOut, setLoggingOut] = useState(false)
+
+  const [defaultDevice, setDefaultDevice] = useState<{ device_id: string | null; name: string | null }>({
+    device_id: null,
+    name: null,
+  })
+  const [defaultDeviceLoading, setDefaultDeviceLoading] = useState(false)
+  const [saveDeviceError, setSaveDeviceError] = useState<string | null>(null)
+  const [saveDeviceSuccess, setSaveDeviceSuccess] = useState(false)
+  const [savingDevice, setSavingDevice] = useState(false)
 
   const [toneArmError, setToneArmError] = useState<string | null>(null)
   const holdDirectionRef = useRef<'left' | 'right' | null>(null)
@@ -25,6 +36,7 @@ export default function Settings() {
       .then((res) => {
         if (cancelled) return
         if (res.error) setError(res.error)
+        setLoggedIn(Boolean(res.logged_in))
         const url = res.auth_url ?? null
         const elapsed = Date.now() - started
         const delay = Math.max(0, minDisplayMs - elapsed)
@@ -62,7 +74,52 @@ export default function Settings() {
     void loadToneArmPosition()
   }, [])
 
+  const loadDefaultDevice = async () => {
+    setDefaultDeviceLoading(true)
+    setSaveDeviceError(null)
+    try {
+      const res = await api.spotify.defaultDevice()
+      setDefaultDevice(res)
+    } catch {
+      setDefaultDevice({ device_id: null, name: null })
+    } finally {
+      setDefaultDeviceLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (loggedIn) void loadDefaultDevice()
+    else setDefaultDevice({ device_id: null, name: null })
+  }, [loggedIn])
+
   const canLogin = !!authUrl && !error
+
+  const handleLogout = async () => {
+    setLoggingOut(true)
+    setSaveDeviceError(null)
+    try {
+      await api.spotify.logout()
+      setLoggedIn(false)
+      setDefaultDevice({ device_id: null, name: null })
+    } finally {
+      setLoggingOut(false)
+    }
+  }
+
+  const handleSaveCurrentDevice = async () => {
+    setSavingDevice(true)
+    setSaveDeviceError(null)
+    setSaveDeviceSuccess(false)
+    try {
+      const res = await api.spotify.saveCurrentDevice()
+      setDefaultDevice({ device_id: res.device_id, name: res.name || null })
+      setSaveDeviceSuccess(true)
+    } catch (e) {
+      setSaveDeviceError(e instanceof Error ? e.message : 'Failed to save device')
+    } finally {
+      setSavingDevice(false)
+    }
+  }
 
   const handleCompleteLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -79,6 +136,7 @@ export default function Settings() {
       }
       setPasteSuccess(true)
       setPasteUrl('')
+      setLoggedIn(true)
     } catch (e) {
       setPasteError(e instanceof Error ? e.message : 'Complete login failed')
     } finally {
@@ -94,11 +152,11 @@ export default function Settings() {
   }
 
   const jogOnce = async (direction: 'left' | 'right', stepSize = 4) => {
-    const steps = direction === 'left' ? -stepSize : stepSize
+    const steps = direction === 'left' ? stepSize : -stepSize
     setToneArmError(null)
     try {
-      await api.motors.toneArm.jog(steps, false)
-      await loadToneArmPosition()
+      await api.motors.toneArm.jog(steps, false, true)
+      //await loadToneArmPosition()
     } catch (e) {
       setToneArmError(e instanceof Error ? e.message : 'Failed to move tone-arm')
     }
@@ -158,7 +216,25 @@ export default function Settings() {
             Link your Spotify account so Spinify can control playback. You only need to do this once
             per device.
           </p>
-          {canLogin ? (
+          {loggedIn ? (
+            <div>
+              <p className="text-neutral-300 mb-3">You are linked to Spotify.</p>
+              <button
+                type="button"
+                onClick={handleLogout}
+                disabled={loggingOut}
+                className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-neutral-700 hover:bg-neutral-600 text-white font-semibold transition-colors disabled:opacity-50"
+              >
+                {loggingOut ? (
+                  <span
+                    className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"
+                    aria-hidden
+                  />
+                ) : null}
+                Log out
+              </button>
+            </div>
+          ) : canLogin ? (
             <a
               href={authUrl!}
               className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-spotify-green hover:bg-spotify-green-hover text-black font-semibold transition-colors"
@@ -187,14 +263,14 @@ export default function Settings() {
               Login with Spotify
             </button>
           )}
-          {!loading && !canLogin && !error && (
+          {!loading && !canLogin && !error && !loggedIn && (
             <p className="text-sm text-neutral-500 mt-4">
               Set <code className="bg-neutral-800 px-1 rounded">SPOTIFY_CLIENT_ID</code> and
               redirect URI in the backend to enable login.
             </p>
           )}
 
-          {canLogin && (
+          {canLogin && !loggedIn && (
             <div className="mt-8 pt-8 border-t border-neutral-700">
               <p className="text-sm font-medium text-neutral-300 mb-2">
                 Manual login (e.g. on Pi)
@@ -244,6 +320,42 @@ export default function Settings() {
                 </button>
               </form>
             </div>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-neutral-800 bg-neutral-900/50 p-8">
+          <h2 className="text-lg font-semibold mb-2">Default playback device</h2>
+          <p className="text-neutral-400 mb-4">
+            When no Spotify app is active, Spinify will try to start playback on this device. Play
+            something on the device you want (e.g. this computer), then click Save current device.
+          </p>
+          {defaultDeviceLoading ? (
+            <p className="text-sm text-neutral-500">Loading…</p>
+          ) : (
+            <p className="text-sm text-neutral-300 mb-3">
+              {defaultDevice.device_id
+                ? `Default device: ${defaultDevice.name || defaultDevice.device_id}`
+                : 'No default device set'}
+            </p>
+          )}
+          {saveDeviceError && (
+            <div className="rounded-lg bg-amber-950/40 border border-amber-900/50 text-amber-200 px-4 py-3 mb-3">
+              {saveDeviceError}
+            </div>
+          )}
+          {saveDeviceSuccess && (
+            <p className="text-sm text-spotify-green mb-3">Default device saved.</p>
+          )}
+          <button
+            type="button"
+            onClick={handleSaveCurrentDevice}
+            disabled={!loggedIn || savingDevice}
+            className="px-4 py-2 rounded-full bg-neutral-700 hover:bg-neutral-600 disabled:opacity-50 text-sm font-medium"
+          >
+            {savingDevice ? '…' : 'Save current device'}
+          </button>
+          {!loggedIn && (
+            <p className="text-sm text-neutral-500 mt-2">Log in to Spotify to set a default device.</p>
           )}
         </div>
 
