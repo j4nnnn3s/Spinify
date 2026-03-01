@@ -5,7 +5,8 @@ from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 
 from spinify.api.state import AppState, get_state
-from spinify.core.spotify_client import get_spotify_client
+from spinify.core.playback_cooldown import record_local_start
+from spinify.core.spotify_client import get_spotify_client, start_playback_with_fallback
 
 router = APIRouter()
 
@@ -80,10 +81,8 @@ def playback_start(
         )
     context_uri = body.context_uri if body else None
     try:
-        if context_uri:
-            sp.start_playback(context_uri=context_uri)
-        else:
-            sp.start_playback()
+        start_playback_with_fallback(context_uri=context_uri)
+        record_local_start()
         return {"ok": True}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))

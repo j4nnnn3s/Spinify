@@ -1,13 +1,18 @@
 """Spotify API client via Spotipy; uses cached OAuth token."""
+import json
+import logging
 from typing import Optional
 
 from spinify.config import (
+    DEFAULT_PLAYBACK_DEVICE_PATH,
     SPOTIFY_CLIENT_ID,
     SPOTIFY_CLIENT_SECRET,
     SPOTIFY_REDIRECT_URI,
     SPOTIFY_SCOPES,
     SPOTIFY_TOKEN_CACHE,
 )
+
+logger = logging.getLogger(__name__)
 
 _spotify_client: Optional["Spotify"] = None
 
@@ -144,6 +149,63 @@ def get_context_track_position(context_uri: str, track_uri: str) -> Optional[dic
             return {"total_tracks": total_tracks, "track_index": max(0, index)}
     except Exception:
         return None
+
+
+def get_default_device() -> dict:
+    """Return stored default playback device: {"device_id": str|None, "name": str|None}."""
+    path = DEFAULT_PLAYBACK_DEVICE_PATH
+    if not path.exists():
+        return {"device_id": None, "name": None}
+    try:
+        data = json.loads(path.read_text())
+        return {
+            "device_id": data.get("device_id") or None,
+            "name": data.get("name") or None,
+        }
+    except Exception:
+        return {"device_id": None, "name": None}
+
+
+def set_default_device(device_id: str, name: Optional[str] = None) -> None:
+    """Persist default playback device to disk."""
+    path = DEFAULT_PLAYBACK_DEVICE_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"device_id": device_id, "name": name or ""}))
+
+
+def _is_no_active_device_error(exc: BaseException) -> bool:
+    """True if the exception is Spotify 404 NO_ACTIVE_DEVICE."""
+    if not hasattr(exc, "http_status"):
+        msg = str(exc).lower()
+        return "404" in msg and ("no active device" in msg or "no_active_device" in msg)
+    if getattr(exc, "http_status", None) != 404:
+        return False
+    msg = (getattr(exc, "msg", None) or "") + " " + (getattr(exc, "reason", None) or "")
+    return "NO_ACTIVE_DEVICE" in msg or "No active device" in msg
+
+
+def start_playback_with_fallback(context_uri: Optional[str] = None) -> None:
+    """
+    Start playback; on 404 NO_ACTIVE_DEVICE, retry with saved default device.
+    Raises on other errors or if retry fails.
+    """
+    sp = get_spotify_client()
+    if sp is None:
+        raise RuntimeError("Spotify not linked")
+    kwargs = {}
+    if context_uri is not None:
+        kwargs["context_uri"] = context_uri
+    try:
+        sp.start_playback(**kwargs)
+        return
+    except Exception as e:
+        if not _is_no_active_device_error(e):
+            raise
+        default = get_default_device()
+        if not default.get("device_id"):
+            raise
+        logger.info("Retrying start_playback with default device %s", default.get("name") or default["device_id"])
+        sp.start_playback(device_id=default["device_id"], **kwargs)
 
 
 def exchange_code_and_save_token(code: str) -> bool:

@@ -1,6 +1,6 @@
 # Spinify Web
 
-React (Vite + TypeScript + Tailwind) frontend for Spinify. Minimal UI with Spotify green accents.
+React (Vite + TypeScript + Tailwind) frontend for Spinify. Minimal UI with Spotify green accents. Dashboard shows current record and playback state, and polls the tone-arm sync endpoint so the platter and tone-arm stay in sync with Spotify (e.g. when you pause from another device). Connect supports manual login (paste redirect URL) for setups where the OAuth redirect cannot hit the device (e.g. Pi without HTTPS).
 
 ## Setup
 
@@ -24,7 +24,7 @@ Open `http://localhost:5173`. The dev server proxies `/api` to `http://localhost
 npm run build
 ```
 
-Output in `dist/`. Serve with any static host or mount under the FastAPI app.
+Output in `dist/`. Serve with any static host or mount under the FastAPI app. Use `npm run preview` to preview the production build locally.
 
 ## Env
 
